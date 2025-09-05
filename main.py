@@ -89,6 +89,7 @@ app = FastAPI()
 
 origins = [
     "https://ai-resume-pro-ten.vercel.app",
+    "ai-resume-pro-nikhils-projects-eb3e72b0.vercel.app",
     "https://ai-resume-builder-service-66nz.onrender.com",  # optional if your frontend fetches from same origin
     "http://localhost:3000",  # local dev
 ]
