@@ -86,20 +86,20 @@ class GenerateAtsPayload(BaseModel):
 
 app = FastAPI()
 
-# origins = ["http://localhost:5173"]
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=origins,
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
+
+origins = [
+    "https://ai-resume-pro-ten.vercel.app",
+    "https://ai-resume-builder-service-66nz.onrender.com",  # optional if your frontend fetches from same origin
+    "http://localhost:3000",  # local dev
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # allow all origins
-    allow_credentials=False,      # MUST be False when using "*" origin
-    allow_methods=["*"],
+    allow_origins=origins,         # or ["*"] for testing
+    allow_credentials=True,        # set True only if you send cookies/auth
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
