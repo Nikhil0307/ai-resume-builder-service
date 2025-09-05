@@ -211,7 +211,20 @@ def build_prompt_for_ats(resume: Union[str, Dict[str, Any]], job_description: Un
     else:
         job_text = to_text(job_description)
 
-    return f"""You are an Applicant Tracking System evaluator. Assess how well the resume matches the job.
+    return f"""You are an Applicant Tracking System (ATS) evaluator.
+Compare the following resume against the job description
+and return ONLY a valid JSON object in the schema below.
+
+Schema:
+{{
+  "score": int (0-100),                   # overall ATS score
+  "keywordMatch": int (0-100),            # % of required keywords matched
+  "missingKeywords": [string],            # list of missing important keywords
+  "recommendations": [string],            # textual recommendations
+  "formatCompliance": int (0-100),        # compliance with ATS-friendly formatting
+  "details": object                       # free-form breakdown (skills, experience, etc.)
+}}
+
 RESUME_START
 {resume_text}
 RESUME_END
