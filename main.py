@@ -147,8 +147,8 @@ def build_prompt(profile: UserProfile, job: JobDescription) -> str:
                 "title": "string",
                 "company": "string",
                 "location": "string",
-                "startDate": "YYYY-MM",
-                "endDate": "YYYY-MM or 'Present'",
+                "startDate": "MM-YYYY",
+                "endDate": "MM-YYYY or 'Present'",
                 "achievements": ["Did X to achieve Y using Z"],
                 "technologies": ["string"]
                 }}
@@ -165,7 +165,7 @@ def build_prompt(profile: UserProfile, job: JobDescription) -> str:
                 {{
                 "degree": "string",
                 "institution": "string",
-                "graduationDate": "YYYY-MM"
+                "graduationDate": "MM-YYYY"
                 }}
             ],
             "certifications": ["string"]
