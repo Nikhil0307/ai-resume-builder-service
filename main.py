@@ -115,7 +115,7 @@ def build_prompt(profile: UserProfile, job: JobDescription) -> str:
     return f"""
             You are an expert resume writing assistant.
 
-            Your task: Generate a tailored resume that follows the schema below and is optimized for ATS (>85% keyword match and >90 ATS score).
+            Your task: Generate a tailored resume that follows the schema below and is optimized for ATS (assured 90%+ keyword match and 90+ ATS score).
 
             STRICT INSTRUCTIONS:
             - All work experience bullets must follow the format: "Did X to achieve Y using Z".
