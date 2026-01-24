@@ -110,7 +110,7 @@ FREE_MODELS_RESUME = [
     "google/gemini-2.0-flash-exp:free",
 ]
 
-FREE_MODEL_ATS = "deepseek/r1t2-chimera:free"
+FREE_MODEL_ATS = "google/gemma-3-27b-it:free"
 
 MAX_RETRIES = 3
 REQUEST_TIMEOUT = 120
