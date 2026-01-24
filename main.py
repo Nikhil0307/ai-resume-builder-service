@@ -175,6 +175,148 @@ Job Description:
 {job.model_dump_json(indent=2)}
 """
 
+def build_prompt_for_ats(resume: Union[str, Dict[str, Any]], job_description: Union[str, Dict[str, Any]]) -> str:
+    def to_text(x: Union[str, Dict[str, Any]]) -> str:
+        if isinstance(x, str):
+            return x.strip()
+        if isinstance(x, dict):
+            # unwrap if passed as { "content": {...} }
+            if 'content' in x:
+                return to_text(x['content'])
+            parts = []
+            if x.get("summary"):
+                parts.append(f"summary: {x.get('summary')}")
+            if x.get("skills"):
+                parts.append(f"skills: {', '.join([k+':'+','.join(v if isinstance(v, list) else [v]) for k,v in x.get('skills', {}).items()])}")
+            if x.get("work_experience"):
+                for we in x.get("work_experience", []):
+                    title = we.get("title", "")
+                    company = we.get("company", "")
+                    ach = " ; ".join(we.get("achievements", []))
+                    parts.append(f"{title} @ {company} — {ach}")
+            if x.get("projects"):
+                for p in x.get("projects", []):
+                    parts.append(f"project: {p.get('name','')} — {p.get('description','')}")
+            return "\n".join(parts).strip()
+        return ""
+
+    resume_text = to_text(resume)
+    job_text = ""
+    if isinstance(job_description, dict) and job_description.get("description"):
+        job_text = job_description.get("description", "")
+    else:
+        job_text = to_text(job_description)
+
+    return f"""You are an Applicant Tracking System (ATS) evaluator.
+Compare the following resume against the job description
+and return ONLY a valid JSON object in the schema below.
+
+Schema:
+{{
+  "score": int (0-100),                   # overall ATS score
+  "keywordMatch": int (0-100),            # % of required keywords matched
+  "missingKeywords": [string],            # list of missing important keywords
+  "recommendations": [string],            # textual recommendations
+  "formatCompliance": int (0-100),        # compliance with ATS-friendly formatting
+  "details": object                       # free-form breakdown (skills, experience, etc.)
+}}
+
+RESUME_START
+{resume_text}
+RESUME_END
+
+JOB_START
+{job_text}
+JOB_END
+"""
+
+def _pct_of(value) -> int:
+    if value is None:
+        return 0
+    try:
+        # handle floats like 0.85 (meaning 85%) and ints like 85
+        if isinstance(value, float) and 0 <= value <= 1:
+            return int(round(value * 100))
+        return int(round(float(value)))
+    except Exception:
+        return 0
+
+def normalize_ats_result(raw: dict) -> dict:
+    """
+    Normalize many possible LLM output shapes into the canonical ATS schema:
+    {
+      "score": int(0-100),
+      "keywordMatch": int(0-100),
+      "missingKeywords": [...],
+      "recommendations": [...],
+      "formatCompliance": int(0-100),
+      "details": { ... }  # original raw payload
+    }
+    """
+
+    # 1) score candidates
+    score = None
+    if raw.get("score") is not None:
+        score = _pct_of(raw.get("score"))
+    elif raw.get("matching_score") is not None:
+        score = _pct_of(raw.get("matching_score"))
+    elif isinstance(raw.get("details"), dict) and raw["details"].get("matching_score") is not None:
+        score = _pct_of(raw["details"]["matching_score"])
+
+    # 2) keywordMatch candidates
+    keywordMatch = None
+    if raw.get("keywordMatch") is not None:
+        keywordMatch = _pct_of(raw.get("keywordMatch"))
+    else:
+        # try breakdown -> keywords -> confidence / match
+        breakdown = raw.get("breakdown") or raw.get("details", {}).get("breakdown") or {}
+        kw = breakdown.get("keywords") if isinstance(breakdown, dict) else None
+        if isinstance(kw, dict):
+            if kw.get("confidence") is not None:
+                # confidence may be 0-1 float or 0-100 number
+                val = kw.get("confidence")
+                keywordMatch = _pct_of(val if not (isinstance(val, float) and 0 <= val <= 1) else val * 100)
+            elif kw.get("match") is not None:
+                keywordMatch = _pct_of(kw.get("match"))
+        # fallback: try details.matchedKeywords vs totalKeywords
+        if keywordMatch is None:
+            matched = raw.get("details", {}).get("matchedKeywords")
+            total = raw.get("details", {}).get("totalKeywords")
+            if isinstance(matched, list) and isinstance(total, int) and total > 0:
+                keywordMatch = _pct_of((len(matched) / total) * 100)
+
+    # 3) missingKeywords
+    missing = raw.get("missingKeywords")
+    if missing is None:
+        missing = raw.get("details", {}).get("missingKeywords") or raw.get("details", {}).get("highImpactGaps") or []
+    if not isinstance(missing, list):
+        missing = []
+
+    # 4) recommendations
+    recs = raw.get("recommendations") or raw.get("details", {}).get("recommendations") or raw.get("advice") or []
+    if not isinstance(recs, list):
+        recs = [str(recs)] if recs else []
+
+    # 5) formatCompliance
+    formatComp = None
+    if raw.get("formatCompliance") is not None:
+        formatComp = _pct_of(raw.get("formatCompliance"))
+    elif raw.get("format_score") is not None:
+        formatComp = _pct_of(raw.get("format_score"))
+    elif isinstance(raw.get("details"), dict) and raw["details"].get("formatCompliance") is not None:
+        formatComp = _pct_of(raw["details"]["formatCompliance"])
+
+    # final normalization with sensible defaults
+    normalized = {
+        "score": score if score is not None else 0,
+        "keywordMatch": keywordMatch if keywordMatch is not None else 0,
+        "missingKeywords": missing,
+        "recommendations": recs,
+        "formatCompliance": formatComp if formatComp is not None else 0,
+        "details": raw,
+    }
+    return normalized
+
 def extract_json(raw: str) -> dict:
     if not raw:
         raise ValueError("Empty response")
@@ -219,6 +361,24 @@ async def generate_with_fallback(prompt: str, models: List[str]) -> dict:
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+@app.post("/generate-ats")
+async def generate_ats(payload: GenerateAtsPayload):
+    try:
+        prompt = build_prompt_for_ats(payload.resume, payload.jobDescription)
+        raw_result = await generate_ats_deepseek(prompt)
+
+        # raw_result should be a dict parsed from the LLM response. Normalize for frontend.
+        normalized = normalize_ats_result(raw_result)
+        return JSONResponse(content=normalized)
+    except HTTPException:
+        # re-raise known HTTPExceptions
+        raise
+    except Exception as e:
+        logger.exception("generate_ats failed: %s", e)
+        # return a 500 with a message (frontend will receive JSON)
+        raise HTTPException(status_code=500, detail=f"Resume generation failed: {e}")
+
 
 @app.post("/generate-resume")
 async def generate_resume(payload: GenerateResumePayload):
