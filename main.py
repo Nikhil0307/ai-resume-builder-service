@@ -120,72 +120,74 @@ REQUEST_TIMEOUT = 120
 
 def build_prompt(profile: UserProfile, job: JobDescription) -> str:
     return f"""
-            You are an expert resume writing assistant.
+You are an expert ATS-focused resume writer.
 
-            Your task: Generate a tailored resume that follows the schema below and is optimized for ATS (assured 90%+ keyword match and 90+ ATS score).
+Goal: Generate a 1-page, ATS-optimized resume with 90%+ keyword match and high ATS score.
 
-            STRICT INSTRUCTIONS:
-            - All work experience bullets must follow the format: "Did X to achieve Y using Z".
-            - Adapt projects and achievements to highlight what’s most relevant to the job description.
-            - If a required skill/experience is missing:
-            • Expand responsibilities in real past roles (if realistic).
-            • Or enhance/modify existing projects to include that technology.
-            • Or invent new, realistic side projects (aligned with backend/distributed systems engineering).
-            - Do NOT fabricate fake companies or job titles.
-            - Use impact-driven language, not JD copy-paste.
-            - Ensure formatting is ATS-friendly (plain text, no tables/columns/images).
-            - Must fit within 1 page equivalent.
-            - Include a strong, tailored Professional Summary.
+Rules:
+- Every work experience bullet MUST follow: "Did X to achieve Y using Z".
+- Emphasize skills, projects, and achievements most relevant to the job description.
+- If a required skill is missing:
+  - Expand realistic responsibilities in existing roles, OR
+  - Enhance existing projects to include the skill, OR
+  - Add realistic backend/distributed-systems side projects.
+- Do NOT invent companies or job titles.
+- Use impact-driven language, not copied JD text.
+- Use plain text only (no tables, columns, or images).
+- Include a strong, tailored professional summary.
 
-            Output MUST be valid JSON and follow this schema:
+Output format:
+- Return ONLY valid JSON.
+- Follow this exact schema:
 
-            {{
-            "summary": "string",
-            "skills": {{
-                "Languages": ["string"],
-                "Frameworks & Tools": ["string"],
-                "Databases & Storage": ["string"],
-                "Infrastructure & Cloud": ["string"],
-                "System Design": ["string"],
-                "Performance Optimization": ["string"]
-            }},
-            "work_experience": [
-                {{
-                "title": "string",
-                "company": "string",
-                "location": "string",
-                "startDate": "MM-YYYY",
-                "endDate": "MM-YYYY or 'Present'",
-                "achievements": ["Did X to achieve Y using Z"],
-                "technologies": ["string"]
-                }}
-            ],
-            "projects": [
-                {{
-                "name": "string",
-                "description": "string",
-                "technologies": ["string"],
-                "achievements": ["Did X to achieve Y using Z"]
-                }}
-            ],
-            "education": [
-                {{
-                "degree": "string",
-                "institution": "string",
-                "graduationDate": "MM-YYYY"
-                }}
-            ],
-            "certifications": ["string"]
-            }}
+{{
+  "summary": "string",
+  "skills": {{
+    "Languages": ["string"],
+    "Frameworks & Tools": ["string"],
+    "Databases & Storage": ["string"],
+    "Infrastructure & Cloud": ["string"],
+    "System Design": ["string"],
+    "Performance Optimization": ["string"]
+  }},
+  "work_experience": [
+    {{
+      "title": "string",
+      "company": "string",
+      "location": "string",
+      "startDate": "MM-YYYY",
+      "endDate": "MM-YYYY or 'Present'",
+      "achievements": ["Did X to achieve Y using Z"],
+      "technologies": ["string"]
+    }}
+  ],
+  "projects": [
+    {{
+      "name": "string",
+      "description": "string",
+      "technologies": ["string"],
+      "achievements": ["Did X to achieve Y using Z"]
+    }}
+  ],
+  "education": [
+    {{
+      "degree": "string",
+      "institution": "string",
+      "graduationDate": "MM-YYYY"
+    }}
+  ],
+  "certifications": ["string"]
+}}
 
-            Now rewrite the resume for ATS optimization using the following data:
+Input data:
 
-            User Profile:
-            {profile.model_dump_json(indent=2)}
+User Profile:
+{profile.model_dump_json(indent=2)}
 
-            Job Description:
-            {job.model_dump_json(indent=2)}
+Job Description (do not omit or summarize):
+{job.model_dump_json(indent=2)}
 """
+
 
 def build_prompt_for_ats(resume: Union[str, Dict[str, Any]], job_description: Union[str, Dict[str, Any]]) -> str:
     def to_text(x: Union[str, Dict[str, Any]]) -> str:
