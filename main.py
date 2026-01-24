@@ -303,6 +303,7 @@ async def call_openrouter(prompt: str, model: str) -> dict:
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.7,
+        "max_tokens": 4096,
     }
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         r = await client.post(OPENROUTER_BASE_URL, headers=headers, json=payload)
