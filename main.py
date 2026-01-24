@@ -108,9 +108,9 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 FREE_MODELS_RESUME = [
     "meta-llama/llama-3.3-70b-instruct:free",
-    "tngtech/deepseek-r1t2-chimera:free",
-    "mistralai/devstral-2512:free",
-    "qwen/qwen-2.5-vl-7b-instruct:free",
+    "deepseek/r1t2-chimera:free",
+    "mistralai/devstral2-2512:free",
+    "mistralai/devstral2-2512:free",
 ]
 
 FREE_MODEL_ATS = "tngtech/deepseek-r1t2-chimera:free"
@@ -268,13 +268,26 @@ def normalize_ats_result(raw: dict) -> dict:
     }
 
 def extract_json(raw: str) -> dict:
+    if not raw or not raw.strip():
+        raise ValueError("Empty response")
+
     raw = raw.strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL | re.IGNORECASE)
-    text = fenced.group(1) if fenced else raw
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        raise ValueError("No JSON found")
-    return json.loads(match.group(0))
+
+    fenced = re.search(
+        r"```(?:json)?\s*(\{[\s\S]*?\})\s*```",
+        raw,
+        re.IGNORECASE,
+    )
+    if fenced:
+        return json.loads(fenced.group(1))
+
+    first = raw.find("{")
+    last = raw.rfind("}")
+    if first != -1 and last != -1 and last > first:
+        return json.loads(raw[first:last + 1])
+
+    raise ValueError("No JSON found")
+
 
 async def call_openrouter(prompt: str, model: str) -> dict:
     headers = {
