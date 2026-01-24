@@ -105,9 +105,9 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 FREE_MODELS_RESUME = [
     "meta-llama/llama-3.3-70b-instruct:free",
-    "deepseek/r1t2-chimera:free",
-    "mistralai/devstral2-2512:free",
-    "qwen/qwen2.5-72b-instruct:free",
+    "google/gemma-3-27b-it:free",
+    "mistralai/mistral-small-3.1-24b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",
 ]
 
 FREE_MODEL_ATS = "deepseek/r1t2-chimera:free"
