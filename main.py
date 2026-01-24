@@ -3,7 +3,7 @@ import re
 import json
 import asyncio
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, status, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -84,20 +84,17 @@ class GenerateAtsPayload(BaseModel):
 
 app = FastAPI()
 
-origins = [
-    "https://ai-resume-pro-ten.vercel.app",
-    "ai-resume-pro-nikhils-projects-eb3e72b0.vercel.app",
-    "https://ai-resume-builder-service-66nz.onrender.com",
-    "http://localhost:3000",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=[
+        "https://ai-resume-pro-ten.vercel.app",
+        "ai-resume-pro-nikhils-projects-eb3e72b0.vercel.app",
+        "https://ai-resume-builder-service-66nz.onrender.com",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -110,10 +107,10 @@ FREE_MODELS_RESUME = [
     "meta-llama/llama-3.3-70b-instruct:free",
     "deepseek/r1t2-chimera:free",
     "mistralai/devstral2-2512:free",
-    "mistralai/devstral2-2512:free",
+    "qwen/qwen2.5-72b-instruct:free",
 ]
 
-FREE_MODEL_ATS = "tngtech/deepseek-r1t2-chimera:free"
+FREE_MODEL_ATS = "deepseek/r1t2-chimera:free"
 
 MAX_RETRIES = 3
 REQUEST_TIMEOUT = 120
@@ -122,24 +119,16 @@ def build_prompt(profile: UserProfile, job: JobDescription) -> str:
     return f"""
 You are an expert ATS-focused resume writer.
 
-Goal: Generate a 1-page, ATS-optimized resume with 90%+ keyword match and high ATS score.
+Generate a 1-page ATS-optimized resume.
 
 Rules:
-- Every work experience bullet MUST follow: "Did X to achieve Y using Z".
-- Emphasize skills, projects, and achievements most relevant to the job description.
-- If a required skill is missing:
-  - Expand realistic responsibilities in existing roles, OR
-  - Enhance existing projects to include the skill, OR
-  - Add realistic backend/distributed-systems side projects.
-- Do NOT invent companies or job titles.
-- Use impact-driven language, not copied JD text.
-- Use plain text only (no tables, columns, or images).
-- Include a strong, tailored professional summary.
+- Bullets must follow: "Did X to achieve Y using Z".
+- Prioritize job-relevant skills.
+- Do NOT invent companies or titles.
+- Plain text only.
+- Return ONLY valid JSON matching the schema below.
 
-Output format:
-- Return ONLY valid JSON.
-- Follow this exact schema:
-
+Schema:
 {{
   "summary": "string",
   "skills": {{
@@ -179,124 +168,27 @@ Output format:
   "certifications": ["string"]
 }}
 
-Input data:
-
 User Profile:
 {profile.model_dump_json(indent=2)}
 
-Job Description (do not omit or summarize):
+Job Description:
 {job.model_dump_json(indent=2)}
 """
 
-
-def build_prompt_for_ats(resume: Union[str, Dict[str, Any]], job_description: Union[str, Dict[str, Any]]) -> str:
-    def to_text(x: Union[str, Dict[str, Any]]) -> str:
-        if isinstance(x, str):
-            return x.strip()
-        if isinstance(x, dict):
-            if 'content' in x:
-                return to_text(x['content'])
-            parts = []
-            if x.get("summary"):
-                parts.append(f"summary: {x.get('summary')}")
-            if x.get("skills"):
-                parts.append(f"skills: {', '.join([k+':'+','.join(v if isinstance(v, list) else [v]) for k,v in x.get('skills', {}).items()])}")
-            if x.get("work_experience"):
-                for we in x.get("work_experience", []):
-                    title = we.get("title", "")
-                    company = we.get("company", "")
-                    ach = " ; ".join(we.get("achievements", []))
-                    parts.append(f"{title} @ {company} — {ach}")
-            if x.get("projects"):
-                for p in x.get("projects", []):
-                    parts.append(f"project: {p.get('name','')} — {p.get('description','')}")
-            return "\n".join(parts).strip()
-        return ""
-
-    resume_text = to_text(resume)
-    job_text = ""
-    if isinstance(job_description, dict) and job_description.get("description"):
-        job_text = job_description.get("description", "")
-    else:
-        job_text = to_text(job_description)
-
-    return f"""You are an Applicant Tracking System (ATS) evaluator.
-Compare the following resume against the job description
-and return ONLY a valid JSON object in the schema below.
-
-Schema:
-{{
-  "score": int (0-100),
-  "keywordMatch": int (0-100),
-  "missingKeywords": [string],
-  "recommendations": [string],
-  "formatCompliance": int (0-100),
-  "details": object
-}}
-
-RESUME_START
-{resume_text}
-RESUME_END
-
-JOB_START
-{job_text}
-JOB_END
-"""
-
-def _pct_of(value) -> int:
-    if value is None:
-        return 0
-    try:
-        if isinstance(value, float) and 0 <= value <= 1:
-            return int(round(value * 100))
-        return int(round(float(value)))
-    except Exception:
-        return 0
-
-def normalize_ats_result(raw: dict) -> dict:
-    score = raw.get("score")
-    keywordMatch = raw.get("keywordMatch")
-    formatCompliance = raw.get("formatCompliance")
-    missing = raw.get("missingKeywords") or []
-    recs = raw.get("recommendations") or []
-
-    return {
-        "score": _pct_of(score),
-        "keywordMatch": _pct_of(keywordMatch),
-        "missingKeywords": missing if isinstance(missing, list) else [],
-        "recommendations": recs if isinstance(recs, list) else [],
-        "formatCompliance": _pct_of(formatCompliance),
-        "details": raw,
-    }
-
 def extract_json(raw: str) -> dict:
-    if not raw or not raw.strip():
+    if not raw:
         raise ValueError("Empty response")
-
-    raw = raw.strip()
-
-    fenced = re.search(
-        r"```(?:json)?\s*(\{[\s\S]*?\})\s*```",
-        raw,
-        re.IGNORECASE,
-    )
-    if fenced:
-        return json.loads(fenced.group(1))
-
-    first = raw.find("{")
-    last = raw.rfind("}")
-    if first != -1 and last != -1 and last > first:
-        return json.loads(raw[first:last + 1])
-
-    raise ValueError("No JSON found")
-
+    fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", raw, re.IGNORECASE)
+    text = fenced.group(1) if fenced else raw
+    first, last = text.find("{"), text.rfind("}")
+    if first == -1 or last == -1:
+        raise ValueError("No JSON found")
+    return json.loads(text[first:last + 1])
 
 async def call_openrouter(prompt: str, model: str) -> dict:
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", "http://localhost"),
-        "X-Title": os.getenv("OPENROUTER_APP_NAME", "ATS Resume Backend")
     }
     payload = {
         "model": model,
@@ -311,8 +203,7 @@ async def call_openrouter(prompt: str, model: str) -> dict:
         r = await client.post(OPENROUTER_BASE_URL, headers=headers, json=payload)
         r.raise_for_status()
         data = r.json()
-        content = data["choices"][0]["message"]["content"]
-        return extract_json(content)
+        return extract_json(data["choices"][0]["message"]["content"])
 
 async def generate_with_fallback(prompt: str, models: List[str]) -> dict:
     last_error = None
@@ -327,10 +218,7 @@ async def generate_with_fallback(prompt: str, models: List[str]) -> dict:
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors()},
-    )
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 @app.post("/generate-resume")
 async def generate_resume(payload: GenerateResumePayload):
@@ -339,13 +227,6 @@ async def generate_resume(payload: GenerateResumePayload):
     resume = await generate_with_fallback(prompt, models)
     return {"resume": resume}
 
-@app.post("/generate-ats")
-async def generate_ats(payload: GenerateAtsPayload):
-    prompt = build_prompt_for_ats(payload.resume, payload.jobDescription)
-    raw = await generate_with_fallback(prompt, [FREE_MODEL_ATS])
-    normalized = normalize_ats_result(raw)
-    return JSONResponse(content=normalized)
-
 @app.get("/")
 def root():
-    return {"status": "AI resume backend running (OpenRouter free models + retries)"}
+    return {"status": "AI resume backend running"}
