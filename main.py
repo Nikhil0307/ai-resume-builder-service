@@ -1,13 +1,13 @@
 import os
 import re
 import json
+import asyncio
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
-from google import genai
 import httpx
 from fastapi.exceptions import RequestValidationError
 import logging
@@ -72,7 +72,6 @@ class JobDescription(BaseModel):
 class GenerateResumePayload(BaseModel):
     profile: UserProfile
     jobDescription: JobDescription
-    aiProvider: Optional[str] = "Gemini"
     modelOverride: Optional[str] = None
 
 class ResumeInput(BaseModel):
@@ -82,34 +81,42 @@ class ResumeInput(BaseModel):
 class GenerateAtsPayload(BaseModel):
     resume: ResumeInput
     jobDescription: JobDescription
-    modelOverride: Optional[str] = None
 
 app = FastAPI()
-
 
 origins = [
     "https://ai-resume-pro-ten.vercel.app",
     "ai-resume-pro-nikhils-projects-eb3e72b0.vercel.app",
-    "https://ai-resume-builder-service-66nz.onrender.com",  # optional if your frontend fetches from same origin
-    "http://localhost:3000",  # local dev
+    "https://ai-resume-builder-service-66nz.onrender.com",
+    "http://localhost:3000",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,         # or ["*"] for testing
-    allow_credentials=True,        # set True only if you send cookies/auth
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
 
-gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+if not OPENROUTER_API_KEY:
+    raise RuntimeError("OPENROUTER_API_KEY is not set")
+
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MISTRAL_MODEL = os.getenv("MISTRAL_MODEL_ID", "mistralai/mistral-7b-instruct:free")
-DEFAULT_LLAMA_MODEL = os.getenv("LLAMA_MODEL_ID", "meta-llama/llama-3.1-405b-instruct:free")
-DEFAULT_DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL_ID", "deepseek/deepseek-chat-v3.1:free")
-DEFAULT_DEEPSEEK_MODEL_ATS = os.getenv("DEEPSEEK_ATS_MODEL_ID", "deepseek/deepseek-r1-distill-llama-70b:free")
+
+FREE_MODELS_RESUME = [
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "deepseek/r1t2-chimera:free",
+    "devstral2-2512:free",
+    "qwen/qwen2.5-72b-instruct:free",
+]
+
+FREE_MODEL_ATS = "deepseek/r1t2-chimera:free"
+
+MAX_RETRIES = 3
+REQUEST_TIMEOUT = 120
 
 def build_prompt(profile: UserProfile, job: JobDescription) -> str:
     return f"""
@@ -185,7 +192,6 @@ def build_prompt_for_ats(resume: Union[str, Dict[str, Any]], job_description: Un
         if isinstance(x, str):
             return x.strip()
         if isinstance(x, dict):
-            # unwrap if passed as { "content": {...} }
             if 'content' in x:
                 return to_text(x['content'])
             parts = []
@@ -218,12 +224,12 @@ and return ONLY a valid JSON object in the schema below.
 
 Schema:
 {{
-  "score": int (0-100),                   # overall ATS score
-  "keywordMatch": int (0-100),            # % of required keywords matched
-  "missingKeywords": [string],            # list of missing important keywords
-  "recommendations": [string],            # textual recommendations
-  "formatCompliance": int (0-100),        # compliance with ATS-friendly formatting
-  "details": object                       # free-form breakdown (skills, experience, etc.)
+  "score": int (0-100),
+  "keywordMatch": int (0-100),
+  "missingKeywords": [string],
+  "recommendations": [string],
+  "formatCompliance": int (0-100),
+  "details": object
 }}
 
 RESUME_START
@@ -239,7 +245,6 @@ def _pct_of(value) -> int:
     if value is None:
         return 0
     try:
-        # handle floats like 0.85 (meaning 85%) and ints like 85
         if isinstance(value, float) and 0 <= value <= 1:
             return int(round(value * 100))
         return int(round(float(value)))
@@ -247,81 +252,20 @@ def _pct_of(value) -> int:
         return 0
 
 def normalize_ats_result(raw: dict) -> dict:
-    """
-    Normalize many possible LLM output shapes into the canonical ATS schema:
-    {
-      "score": int(0-100),
-      "keywordMatch": int(0-100),
-      "missingKeywords": [...],
-      "recommendations": [...],
-      "formatCompliance": int(0-100),
-      "details": { ... }  # original raw payload
-    }
-    """
+    score = raw.get("score")
+    keywordMatch = raw.get("keywordMatch")
+    formatCompliance = raw.get("formatCompliance")
+    missing = raw.get("missingKeywords") or []
+    recs = raw.get("recommendations") or []
 
-    # 1) score candidates
-    score = None
-    if raw.get("score") is not None:
-        score = _pct_of(raw.get("score"))
-    elif raw.get("matching_score") is not None:
-        score = _pct_of(raw.get("matching_score"))
-    elif isinstance(raw.get("details"), dict) and raw["details"].get("matching_score") is not None:
-        score = _pct_of(raw["details"]["matching_score"])
-
-    # 2) keywordMatch candidates
-    keywordMatch = None
-    if raw.get("keywordMatch") is not None:
-        keywordMatch = _pct_of(raw.get("keywordMatch"))
-    else:
-        # try breakdown -> keywords -> confidence / match
-        breakdown = raw.get("breakdown") or raw.get("details", {}).get("breakdown") or {}
-        kw = breakdown.get("keywords") if isinstance(breakdown, dict) else None
-        if isinstance(kw, dict):
-            if kw.get("confidence") is not None:
-                # confidence may be 0-1 float or 0-100 number
-                val = kw.get("confidence")
-                keywordMatch = _pct_of(val if not (isinstance(val, float) and 0 <= val <= 1) else val * 100)
-            elif kw.get("match") is not None:
-                keywordMatch = _pct_of(kw.get("match"))
-        # fallback: try details.matchedKeywords vs totalKeywords
-        if keywordMatch is None:
-            matched = raw.get("details", {}).get("matchedKeywords")
-            total = raw.get("details", {}).get("totalKeywords")
-            if isinstance(matched, list) and isinstance(total, int) and total > 0:
-                keywordMatch = _pct_of((len(matched) / total) * 100)
-
-    # 3) missingKeywords
-    missing = raw.get("missingKeywords")
-    if missing is None:
-        missing = raw.get("details", {}).get("missingKeywords") or raw.get("details", {}).get("highImpactGaps") or []
-    if not isinstance(missing, list):
-        missing = []
-
-    # 4) recommendations
-    recs = raw.get("recommendations") or raw.get("details", {}).get("recommendations") or raw.get("advice") or []
-    if not isinstance(recs, list):
-        recs = [str(recs)] if recs else []
-
-    # 5) formatCompliance
-    formatComp = None
-    if raw.get("formatCompliance") is not None:
-        formatComp = _pct_of(raw.get("formatCompliance"))
-    elif raw.get("format_score") is not None:
-        formatComp = _pct_of(raw.get("format_score"))
-    elif isinstance(raw.get("details"), dict) and raw["details"].get("formatCompliance") is not None:
-        formatComp = _pct_of(raw["details"]["formatCompliance"])
-
-    # final normalization with sensible defaults
-    normalized = {
-        "score": score if score is not None else 0,
-        "keywordMatch": keywordMatch if keywordMatch is not None else 0,
-        "missingKeywords": missing,
-        "recommendations": recs,
-        "formatCompliance": formatComp if formatComp is not None else 0,
+    return {
+        "score": _pct_of(score),
+        "keywordMatch": _pct_of(keywordMatch),
+        "missingKeywords": missing if isinstance(missing, list) else [],
+        "recommendations": recs if isinstance(recs, list) else [],
+        "formatCompliance": _pct_of(formatCompliance),
         "details": raw,
     }
-    return normalized
-
 
 def extract_json(raw: str) -> dict:
     raw = raw.strip()
@@ -329,23 +273,10 @@ def extract_json(raw: str) -> dict:
     text = fenced.group(1) if fenced else raw
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
-        raise HTTPException(status_code=500, detail="AI did not return JSON")
-    try:
-        return json.loads(match.group(0))
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"Invalid JSON: {e}")
+        raise ValueError("No JSON found")
+    return json.loads(match.group(0))
 
-async def generate_gemini(prompt: str):
-    resp = gemini_client.models.generate_content(
-        model="gemini-2.5-pro",
-        contents=prompt,
-        config={"temperature": 0.7, "response_mime_type": "application/json"}
-    )
-    return extract_json(resp.text.strip())
-
-async def generate_openrouter(prompt: str, model_id: str):
-    if not OPENROUTER_API_KEY:
-        raise HTTPException(status_code=500, detail="Missing OPENROUTER_API_KEY")
+async def call_openrouter(prompt: str, model: str) -> dict:
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -353,87 +284,52 @@ async def generate_openrouter(prompt: str, model_id: str):
         "X-Title": os.getenv("OPENROUTER_APP_NAME", "ATS Resume Backend")
     }
     payload = {
-        "model": model_id,
+        "model": model,
         "messages": [
-            {"role": "system", "content": "You are an expert ATS resume writer. Output valid JSON only."},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": "Return valid JSON only."},
+            {"role": "user", "content": prompt},
         ],
-        "temperature": 0.7
+        "temperature": 0.7,
     }
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         r = await client.post(OPENROUTER_BASE_URL, headers=headers, json=payload)
-        if r.status_code >= 400:
-            raise HTTPException(status_code=500, detail=f"OpenRouter error: {r.status_code} {r.text}")
+        r.raise_for_status()
         data = r.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    if not content:
-        raise HTTPException(status_code=500, detail="Empty response from OpenRouter")
-    return extract_json(content)
+        content = data["choices"][0]["message"]["content"]
+        return extract_json(content)
 
-async def generate_mistral(prompt: str, model_override: Optional[str] = None):
-    model = model_override or DEFAULT_MISTRAL_MODEL
-    return await generate_openrouter(prompt, model)
-
-async def generate_llama(prompt: str, model_override: Optional[str] = None):
-    model = model_override or DEFAULT_LLAMA_MODEL
-    return await generate_openrouter(prompt, model)
-
-async def generate_deepseek(prompt: str, model_override: Optional[str] = None):
-    model = model_override or DEFAULT_DEEPSEEK_MODEL
-    return await generate_openrouter(prompt, model)
-
-async def generate_ats_deepseek(prompt: str):
-    model = DEFAULT_DEEPSEEK_MODEL_ATS
-    return await generate_openrouter(prompt, model)
+async def generate_with_fallback(prompt: str, models: List[str]) -> dict:
+    last_error = None
+    for _ in range(MAX_RETRIES):
+        for model in models:
+            try:
+                return await call_openrouter(prompt, model)
+            except Exception as e:
+                last_error = e
+                await asyncio.sleep(0.5)
+    raise HTTPException(status_code=500, detail=str(last_error))
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.error("RequestValidationError: %s", exc.errors())
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors(), "body": exc.body},
+        content={"detail": exc.errors()},
     )
+
+@app.post("/generate-resume")
+async def generate_resume(payload: GenerateResumePayload):
+    prompt = build_prompt(payload.profile, payload.jobDescription)
+    models = [payload.modelOverride] if payload.modelOverride else FREE_MODELS_RESUME
+    resume = await generate_with_fallback(prompt, models)
+    return {"resume": resume}
 
 @app.post("/generate-ats")
 async def generate_ats(payload: GenerateAtsPayload):
-    try:
-        prompt = build_prompt_for_ats(payload.resume, payload.jobDescription)
-        raw_result = await generate_ats_deepseek(prompt)
-
-        # raw_result should be a dict parsed from the LLM response. Normalize for frontend.
-        normalized = normalize_ats_result(raw_result)
-        return JSONResponse(content=normalized)
-    except HTTPException:
-        # re-raise known HTTPExceptions
-        raise
-    except Exception as e:
-        logger.exception("generate_ats failed: %s", e)
-        # return a 500 with a message (frontend will receive JSON)
-        raise HTTPException(status_code=500, detail=f"Resume generation failed: {e}")
-
-    
-@app.post("/generate-resume")
-async def generate_resume(payload: GenerateResumePayload):
-    try:
-        prompt = build_prompt(payload.profile, payload.jobDescription)
-        provider = (payload.aiProvider or "Gemini").strip().lower()
-        if provider == "gemini":
-            structured_resume = await generate_gemini(prompt)
-        elif provider == "mistral":
-            structured_resume = await generate_mistral(prompt, payload.modelOverride)
-        elif provider == "llama":
-            structured_resume = await generate_llama(prompt, payload.modelOverride)
-        elif provider == "deepseek":
-            structured_resume = await generate_deepseek(prompt, payload.modelOverride)
-        else:
-            raise HTTPException(status_code=400, detail="Unknown provider")
-        return {"resume": structured_resume}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Resume generation failed: {e}")
+    prompt = build_prompt_for_ats(payload.resume, payload.jobDescription)
+    raw = await generate_with_fallback(prompt, [FREE_MODEL_ATS])
+    normalized = normalize_ats_result(raw)
+    return JSONResponse(content=normalized)
 
 @app.get("/")
-def read_root():
-    return {"status": "AI resume backend is running (Gemini + OpenRouter: Mistral, Llama)!"}
-
+def root():
+    return {"status": "AI resume backend running (OpenRouter free models + retries)"}
