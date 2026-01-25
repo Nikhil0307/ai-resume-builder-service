@@ -107,10 +107,10 @@ FREE_MODELS_RESUME = [
     "meta-llama/llama-3.3-70b-instruct:free",
     "google/gemma-3-27b-it:free",
     "mistralai/mistral-small-3.1-24b-instruct:free",
-    "google/gemini-2.0-flash-exp:free",
+    "openai/gpt-oss-120b:free",
 ]
 
-FREE_MODEL_ATS = "google/gemma-3-27b-it:free"
+FREE_MODEL_ATS = "openai/gpt-oss-120b:free"
 
 MAX_RETRIES = 3
 REQUEST_TIMEOUT = 120
@@ -364,21 +364,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.post("/generate-ats")
 async def generate_ats(payload: GenerateAtsPayload):
-    try:
-        prompt = build_prompt_for_ats(payload.resume, payload.jobDescription)
-        raw_result = await generate_ats_deepseek(prompt)
-
-        # raw_result should be a dict parsed from the LLM response. Normalize for frontend.
-        normalized = normalize_ats_result(raw_result)
-        return JSONResponse(content=normalized)
-    except HTTPException:
-        # re-raise known HTTPExceptions
-        raise
-    except Exception as e:
-        logger.exception("generate_ats failed: %s", e)
-        # return a 500 with a message (frontend will receive JSON)
-        raise HTTPException(status_code=500, detail=f"Resume generation failed: {e}")
-
+    prompt = build_prompt_for_ats(payload.resume.content, payload.jobDescription)
+    ats = await generate_with_fallback(prompt, [FREE_MODEL_ATS])
+    return JSONResponse(content=ats)
 
 @app.post("/generate-resume")
 async def generate_resume(payload: GenerateResumePayload):
