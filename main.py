@@ -60,7 +60,6 @@ class UserProfile(BaseModel):
     projects: List[Project]
     skills: Dict[str, Any]
     education: List[Education]
-    certifications: List[str]
 
 class JobDescription(BaseModel):
     title: str = ""
@@ -164,8 +163,7 @@ Schema:
       "institution": "string",
       "graduationDate": "MM-YYYY"
     }}
-  ],
-  "certifications": ["string"]
+  ]
 }}
 
 User Profile:
