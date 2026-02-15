@@ -1,13 +1,13 @@
 import os
 import re
 import json
-import asyncio
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
+from google import genai
 import httpx
 from fastapi.exceptions import RequestValidationError
 import logging
@@ -60,6 +60,7 @@ class UserProfile(BaseModel):
     projects: List[Project]
     skills: Dict[str, Any]
     education: List[Education]
+    certifications: List[str]
 
 class JobDescription(BaseModel):
     title: str = ""
@@ -71,6 +72,7 @@ class JobDescription(BaseModel):
 class GenerateResumePayload(BaseModel):
     profile: UserProfile
     jobDescription: JobDescription
+    aiProvider: Optional[str] = "Gemini"
     modelOverride: Optional[str] = None
 
 class ResumeInput(BaseModel):
@@ -80,97 +82,102 @@ class ResumeInput(BaseModel):
 class GenerateAtsPayload(BaseModel):
     resume: ResumeInput
     jobDescription: JobDescription
+    modelOverride: Optional[str] = None
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://ai-resume-pro-ten.vercel.app",
-        "ai-resume-pro-nikhils-projects-eb3e72b0.vercel.app",
-        "https://ai-resume-builder-service-66nz.onrender.com",
-        "http://localhost:3000",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-if not OPENROUTER_API_KEY:
-    raise RuntimeError("OPENROUTER_API_KEY is not set")
-
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-FREE_MODELS_RESUME = [
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemma-3-27b-it:free",
-    "mistralai/mistral-small-3.1-24b-instruct:free",
-    "openai/gpt-oss-120b:free",
+origins = [
+    "https://ai-resume-pro-ten.vercel.app",
+    "ai-resume-pro-nikhils-projects-eb3e72b0.vercel.app",
+    "https://ai-resume-builder-service-66nz.onrender.com",  # optional if your frontend fetches from same origin
+    "http://localhost:3000",  # local dev
 ]
 
-FREE_MODEL_ATS = "openai/gpt-oss-120b:free"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,         # or ["*"] for testing
+    allow_credentials=True,        # set True only if you send cookies/auth
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
-MAX_RETRIES = 3
-REQUEST_TIMEOUT = 120
+gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MISTRAL_MODEL = os.getenv("MISTRAL_MODEL_ID", "mistralai/mistral-7b-instruct:free")
+DEFAULT_LLAMA_MODEL = os.getenv("LLAMA_MODEL_ID", "meta-llama/llama-3.1-405b-instruct:free")
+DEFAULT_DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL_ID", "deepseek/deepseek-chat-v3.1:free")
+DEFAULT_DEEPSEEK_MODEL_ATS = os.getenv("DEEPSEEK_ATS_MODEL_ID", "deepseek/deepseek-r1-distill-llama-70b:free")
 
 def build_prompt(profile: UserProfile, job: JobDescription) -> str:
     return f"""
-You are an expert ATS-focused resume writer.
+            You are an expert resume writing assistant.
 
-Generate a 1-page ATS-optimized resume.
+            Your task: Generate a tailored resume that follows the schema below and is optimized for ATS (assured 90%+ keyword match and 90+ ATS score).
 
-Rules:
-- Bullets must follow: "Did X to achieve Y using Z".
-- Prioritize job-relevant skills.
-- Do NOT invent companies or titles.
-- Plain text only.
-- Return ONLY valid JSON matching the schema below.
+            STRICT INSTRUCTIONS:
+            - All work experience bullets must follow the format: "Did X to achieve Y using Z".
+            - Adapt projects and achievements to highlight what’s most relevant to the job description.
+            - If a required skill/experience is missing:
+            • Expand responsibilities in real past roles (if realistic).
+            • Or enhance/modify existing projects to include that technology.
+            • Or invent new, realistic side projects (aligned with backend/distributed systems engineering).
+            - Do NOT fabricate fake companies or job titles.
+            - Use impact-driven language, not JD copy-paste.
+            - Ensure formatting is ATS-friendly (plain text, no tables/columns/images).
+            - Must fit within 1 page equivalent.
+            - Include a strong, tailored Professional Summary.
 
-Schema:
-{{
-  "summary": "string",
-  "skills": {{
-    "Languages": ["string"],
-    "Frameworks & Tools": ["string"],
-    "Databases & Storage": ["string"],
-    "Infrastructure & Cloud": ["string"],
-    "System Design": ["string"],
-    "Performance Optimization": ["string"]
-  }},
-  "work_experience": [
-    {{
-      "title": "string",
-      "company": "string",
-      "location": "string",
-      "startDate": "MM-YYYY",
-      "endDate": "MM-YYYY or 'Present'",
-      "achievements": ["Did X to achieve Y using Z"],
-      "technologies": ["string"]
-    }}
-  ],
-  "projects": [
-    {{
-      "name": "string",
-      "description": "string",
-      "technologies": ["string"],
-      "achievements": ["Did X to achieve Y using Z"]
-    }}
-  ],
-  "education": [
-    {{
-      "degree": "string",
-      "institution": "string",
-      "graduationDate": "MM-YYYY"
-    }}
-  ]
-}}
+            Output MUST be valid JSON and follow this schema:
 
-User Profile:
-{profile.model_dump_json(indent=2)}
+            {{
+            "summary": "string",
+            "skills": {{
+                "Languages": ["string"],
+                "Frameworks & Tools": ["string"],
+                "Databases & Storage": ["string"],
+                "Infrastructure & Cloud": ["string"],
+                "System Design": ["string"],
+                "Performance Optimization": ["string"]
+            }},
+            "work_experience": [
+                {{
+                "title": "string",
+                "company": "string",
+                "location": "string",
+                "startDate": "MM-YYYY",
+                "endDate": "MM-YYYY or 'Present'",
+                "achievements": ["Did X to achieve Y using Z"],
+                "technologies": ["string"]
+                }}
+            ],
+            "projects": [
+                {{
+                "name": "string",
+                "description": "string",
+                "technologies": ["string"],
+                "achievements": ["Did X to achieve Y using Z"]
+                }}
+            ],
+            "education": [
+                {{
+                "degree": "string",
+                "institution": "string",
+                "graduationDate": "MM-YYYY"
+                }}
+            ],
+            "certifications": ["string"]
+            }}
 
-Job Description:
-{job.model_dump_json(indent=2)}
+            Now rewrite the resume for ATS optimization using the following data:
+
+            User Profile:
+            {profile.model_dump_json(indent=2)}
+
+            Job Description:
+            {job.model_dump_json(indent=2)}
 """
 
 def build_prompt_for_ats(resume: Union[str, Dict[str, Any]], job_description: Union[str, Dict[str, Any]]) -> str:
@@ -315,64 +322,117 @@ def normalize_ats_result(raw: dict) -> dict:
     }
     return normalized
 
-def extract_json(raw: str) -> dict:
-    if not raw:
-        raise ValueError("Empty response")
-    fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", raw, re.IGNORECASE)
-    text = fenced.group(1) if fenced else raw
-    first, last = text.find("{"), text.rfind("}")
-    if first == -1 or last == -1:
-        raise ValueError("No JSON found")
-    return json.loads(text[first:last + 1])
 
-async def call_openrouter(prompt: str, model: str) -> dict:
+def extract_json(raw: str) -> dict:
+    raw = raw.strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL | re.IGNORECASE)
+    text = fenced.group(1) if fenced else raw
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise HTTPException(status_code=500, detail="AI did not return JSON")
+    try:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Invalid JSON: {e}")
+
+async def generate_gemini(prompt: str):
+    resp = gemini_client.models.generate_content(
+        model="gemini-2.5-pro",
+        contents=prompt,
+        config={"temperature": 0.7, "response_mime_type": "application/json"}
+    )
+    return extract_json(resp.text.strip())
+
+async def generate_openrouter(prompt: str, model_id: str):
+    if not OPENROUTER_API_KEY:
+        raise HTTPException(status_code=500, detail="Missing OPENROUTER_API_KEY")
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
+        "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", "http://localhost"),
+        "X-Title": os.getenv("OPENROUTER_APP_NAME", "ATS Resume Backend")
     }
     payload = {
-        "model": model,
+        "model": model_id,
         "messages": [
-            {"role": "system", "content": "Return valid JSON only."},
-            {"role": "user", "content": prompt},
+            {"role": "system", "content": "You are an expert ATS resume writer. Output valid JSON only."},
+            {"role": "user", "content": prompt}
         ],
-        "temperature": 0.7,
-        "max_tokens": 4096,
+        "temperature": 0.7
     }
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(OPENROUTER_BASE_URL, headers=headers, json=payload)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raise HTTPException(status_code=500, detail=f"OpenRouter error: {r.status_code} {r.text}")
         data = r.json()
-        return extract_json(data["choices"][0]["message"]["content"])
+    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    if not content:
+        raise HTTPException(status_code=500, detail="Empty response from OpenRouter")
+    return extract_json(content)
 
-async def generate_with_fallback(prompt: str, models: List[str]) -> dict:
-    last_error = None
-    for _ in range(MAX_RETRIES):
-        for model in models:
-            try:
-                return await call_openrouter(prompt, model)
-            except Exception as e:
-                last_error = e
-                await asyncio.sleep(0.5)
-    raise HTTPException(status_code=500, detail=str(last_error))
+async def generate_mistral(prompt: str, model_override: Optional[str] = None):
+    model = model_override or DEFAULT_MISTRAL_MODEL
+    return await generate_openrouter(prompt, model)
+
+async def generate_llama(prompt: str, model_override: Optional[str] = None):
+    model = model_override or DEFAULT_LLAMA_MODEL
+    return await generate_openrouter(prompt, model)
+
+async def generate_deepseek(prompt: str, model_override: Optional[str] = None):
+    model = model_override or DEFAULT_DEEPSEEK_MODEL
+    return await generate_openrouter(prompt, model)
+
+async def generate_ats_deepseek(prompt: str):
+    model = DEFAULT_DEEPSEEK_MODEL_ATS
+    return await generate_openrouter(prompt, model)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    logger.error("RequestValidationError: %s", exc.errors())
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors(), "body": exc.body},
+    )
 
 @app.post("/generate-ats")
 async def generate_ats(payload: GenerateAtsPayload):
-    prompt = build_prompt_for_ats(payload.resume.content, payload.jobDescription)
-    ats = await generate_with_fallback(prompt, [FREE_MODEL_ATS])
-    return JSONResponse(content=ats)
+    try:
+        prompt = build_prompt_for_ats(payload.resume, payload.jobDescription)
+        raw_result = await generate_ats_deepseek(prompt)
 
+        # raw_result should be a dict parsed from the LLM response. Normalize for frontend.
+        normalized = normalize_ats_result(raw_result)
+        return JSONResponse(content=normalized)
+    except HTTPException:
+        # re-raise known HTTPExceptions
+        raise
+    except Exception as e:
+        logger.exception("generate_ats failed: %s", e)
+        # return a 500 with a message (frontend will receive JSON)
+        raise HTTPException(status_code=500, detail=f"Resume generation failed: {e}")
+
+    
 @app.post("/generate-resume")
 async def generate_resume(payload: GenerateResumePayload):
-    prompt = build_prompt(payload.profile, payload.jobDescription)
-    models = [payload.modelOverride] if payload.modelOverride else FREE_MODELS_RESUME
-    resume = await generate_with_fallback(prompt, models)
-    return {"resume": resume}
+    try:
+        prompt = build_prompt(payload.profile, payload.jobDescription)
+        provider = (payload.aiProvider or "Gemini").strip().lower()
+        if provider == "gemini":
+            structured_resume = await generate_gemini(prompt)
+        elif provider == "mistral":
+            structured_resume = await generate_mistral(prompt, payload.modelOverride)
+        elif provider == "llama":
+            structured_resume = await generate_llama(prompt, payload.modelOverride)
+        elif provider == "deepseek":
+            structured_resume = await generate_deepseek(prompt, payload.modelOverride)
+        else:
+            raise HTTPException(status_code=400, detail="Unknown provider")
+        return {"resume": structured_resume}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Resume generation failed: {e}")
 
 @app.get("/")
-def root():
-    return {"status": "AI resume backend running"}
+def read_root():
+    return {"status": "AI resume backend is running (Gemini + OpenRouter: Mistral, Llama)!"}
