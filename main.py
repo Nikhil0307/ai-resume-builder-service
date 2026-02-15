@@ -337,7 +337,7 @@ def extract_json(raw: str) -> dict:
 
 async def generate_gemini(prompt: str):
     resp = gemini_client.models.generate_content(
-        model="gemini-2.5-pro",
+        model="gemini-2.5-flash",
         contents=prompt,
         config={"temperature": 0.7, "response_mime_type": "application/json"}
     )
