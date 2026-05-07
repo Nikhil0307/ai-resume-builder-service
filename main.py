@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import asyncio
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -368,8 +369,6 @@ def extract_json(raw: str) -> dict:
         return json.loads(match.group(0))
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"Invalid JSON: {e}")
-
-import asyncio
 
 async def generate_gemini(prompt: str, max_retries: int = 3):
     for attempt in range(max_retries):
