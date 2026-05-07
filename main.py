@@ -122,7 +122,7 @@ def build_prompt(profile: UserProfile, job: JobDescription, condensed: bool = Fa
             - Summary: 2 sentences max.
             - Skills: 5 categories max, shorter lists.
             - Work experience: 4 bullets for current role, 3 for older. Each bullet 15-22 words max.
-            - Projects: 2 projects, 2 bullets each.
+            - Projects: exactly 2 projects, 2 bullets each. No 3rd project.
             - Education: 1 line.
             - Keep the bold-prefix format on bullets. Keep metrics. Just tighten language.
 """
@@ -160,7 +160,7 @@ def build_prompt(profile: UserProfile, job: JobDescription, condensed: bool = Fa
             - Summary: 2-3 sentences. Dense with keywords.
             - Skills: 5-7 categories (e.g., Languages, Frameworks & APIs, Databases & Storage, Infrastructure & Cloud, AI/ML, System Design). Each category has comma-separated values.
             - Work experience: 5-6 bullet points for the most recent/current role. 3-4 bullets for older roles. Each bullet 15-30 words.
-            - Projects: exactly 3 projects, each with exactly 2 bullet points. No description field needed — put everything in achievements.
+            - Projects: exactly 2 projects, each with exactly 2 bullet points. No description field needed — put everything in achievements. Do NOT include a 3rd project.
             - Education: 1 line per entry (institution, location, degree, date).
             - The page must be FULL — dense with keywords, metrics, and impact. No wasted space. No half-empty page.
             {condensed_block}
@@ -540,7 +540,17 @@ Title: {payload.jobDescription.title}
 Company: {company}
 Description: {payload.jobDescription.description}
 """
-        result = await generate_deepseek(prompt)
+        # Try DeepSeek first (2 attempts), fallback to Gemini
+        for attempt in range(2):
+            try:
+                result = await generate_deepseek(prompt)
+                return result
+            except Exception:
+                if attempt < 1:
+                    await asyncio.sleep(3)
+                    continue
+        # DeepSeek failed twice, fallback to Gemini
+        result = await generate_gemini(prompt)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cover letter generation failed: {e}")
