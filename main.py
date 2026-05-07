@@ -106,7 +106,8 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_REST_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MISTRAL_MODEL = os.getenv("MISTRAL_MODEL_ID", "mistralai/mistral-7b-instruct:free")
@@ -373,12 +374,20 @@ def extract_json(raw: str) -> dict:
 async def generate_gemini(prompt: str, max_retries: int = 3):
     for attempt in range(max_retries):
         try:
-            resp = gemini_client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config={"temperature": 0.7, "response_mime_type": "application/json"}
-            )
-            return extract_json(resp.text.strip())
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.7,
+                    "responseMimeType": "application/json"
+                }
+            }
+            async with httpx.AsyncClient(timeout=120) as client:
+                r = await client.post(GEMINI_REST_URL, json=payload)
+                if r.status_code >= 400:
+                    raise Exception(f"{r.status_code} {r.text[:200]}")
+                data = r.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            return extract_json(text.strip())
         except Exception as e:
             err_str = str(e)
             if ("503" in err_str or "UNAVAILABLE" in err_str or "overload" in err_str.lower() or "429" in err_str) and attempt < max_retries - 1:
