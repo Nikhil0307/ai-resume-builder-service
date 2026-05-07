@@ -107,7 +107,9 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_REST_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+GEMINI_PRIMARY_MODEL = "gemini-3-flash-preview"
+GEMINI_FALLBACK_MODEL = "gemini-2.5-flash"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MISTRAL_MODEL = os.getenv("MISTRAL_MODEL_ID", "mistralai/mistral-7b-instruct:free")
@@ -371,31 +373,39 @@ def extract_json(raw: str) -> dict:
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"Invalid JSON: {e}")
 
+async def _call_gemini(prompt: str, model: str):
+    url = f"{GEMINI_BASE_URL}/{model}:generateContent?key={GEMINI_API_KEY}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.7,
+            "responseMimeType": "application/json"
+        }
+    }
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.post(url, json=payload)
+        if r.status_code >= 400:
+            raise Exception(f"{r.status_code} {r.text[:200]}")
+        data = r.json()
+    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    return extract_json(text.strip())
+
 async def generate_gemini(prompt: str, max_retries: int = 3):
+    # Try primary model (gemini-3-flash-preview)
     for attempt in range(max_retries):
         try:
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.7,
-                    "responseMimeType": "application/json"
-                }
-            }
-            async with httpx.AsyncClient(timeout=120) as client:
-                r = await client.post(GEMINI_REST_URL, json=payload)
-                if r.status_code >= 400:
-                    raise Exception(f"{r.status_code} {r.text[:200]}")
-                data = r.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return extract_json(text.strip())
+            return await _call_gemini(prompt, GEMINI_PRIMARY_MODEL)
         except Exception as e:
             err_str = str(e)
             if ("503" in err_str or "UNAVAILABLE" in err_str or "overload" in err_str.lower() or "429" in err_str) and attempt < max_retries - 1:
                 wait = (attempt + 1) * 5
-                logger.warning(f"Gemini retry {attempt+1}/{max_retries} after {wait}s: {err_str[:100]}")
+                logger.warning(f"Gemini primary retry {attempt+1}/{max_retries} after {wait}s")
                 await asyncio.sleep(wait)
                 continue
-            raise
+            break
+    # Fallback to 2.5-flash
+    logger.warning(f"Gemini primary ({GEMINI_PRIMARY_MODEL}) failed, falling back to {GEMINI_FALLBACK_MODEL}")
+    return await _call_gemini(prompt, GEMINI_FALLBACK_MODEL)
 
 async def generate_openrouter(prompt: str, model_id: str):
     if not OPENROUTER_API_KEY:
