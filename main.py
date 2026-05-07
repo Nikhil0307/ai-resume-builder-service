@@ -74,6 +74,7 @@ class GenerateResumePayload(BaseModel):
     jobDescription: JobDescription
     aiProvider: Optional[str] = "Gemini"
     modelOverride: Optional[str] = None
+    condensed: Optional[bool] = False
 
 class ResumeInput(BaseModel):
     id: Optional[str] = None
@@ -89,9 +90,10 @@ app = FastAPI()
 
 origins = [
     "https://ai-resume-pro-ten.vercel.app",
-    "ai-resume-pro-nikhils-projects-eb3e72b0.vercel.app",
+    "https://ai-resume-pro-nikhils-projects-eb3e72b0.vercel.app",
     "https://ai-resume-builder-service-66nz.onrender.com",  # optional if your frontend fetches from same origin
     "http://localhost:3000",  # local dev
+    "http://localhost:5173",  # vite dev
 ]
 
 app.add_middleware(
@@ -111,73 +113,105 @@ DEFAULT_LLAMA_MODEL = os.getenv("LLAMA_MODEL_ID", "meta-llama/llama-3.1-405b-ins
 DEFAULT_DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL_ID", "deepseek/deepseek-chat-v3.1:free")
 DEFAULT_DEEPSEEK_MODEL_ATS = os.getenv("DEEPSEEK_ATS_MODEL_ID", "deepseek/deepseek-r1-distill-llama-70b:free")
 
-def build_prompt(profile: UserProfile, job: JobDescription) -> str:
+def build_prompt(profile: UserProfile, job: JobDescription, condensed: bool = False) -> str:
+    condensed_block = ""
+    if condensed:
+        condensed_block = """
+            CRITICAL — COMPACT MODE (previous output was too long for 1 page):
+            REDUCE content length while keeping the page FULL and DENSE:
+            - Summary: 2 sentences max.
+            - Skills: 5 categories max, shorter lists.
+            - Work experience: 4 bullets for current role, 3 for older. Each bullet 15-22 words max.
+            - Projects: 2 projects, 2 bullets each.
+            - Education: 1 line.
+            - Keep the bold-prefix format on bullets. Keep metrics. Just tighten language.
+"""
+
     return f"""
             You are an expert resume writing assistant.
 
             Your task: Generate a tailored resume that follows the schema below and is optimized for ATS (assured 90%+ keyword match and 90+ ATS score).
 
             STRICT INSTRUCTIONS:
-            - All work experience bullets must follow the format: "Did X to achieve Y using Z".
             - Adapt projects and achievements to highlight what’s most relevant to the job description.
             - If a required skill/experience is missing:
             • Expand responsibilities in real past roles (if realistic).
             • Or enhance/modify existing projects to include that technology.
-            • Or invent new, realistic side projects (aligned with backend/distributed systems engineering).
+            • Or invent new, realistic side projects (aligned with the user’s domain).
             - Do NOT fabricate fake companies or job titles.
-            - Use impact-driven language, not JD copy-paste.
+            - Use impact-driven language with quantified metrics (%, x, K, M numbers).
             - Ensure formatting is ATS-friendly (plain text, no tables/columns/images).
-            - Must fit within 1 page equivalent.
-            - Include a strong, tailored Professional Summary.
+
+            ACTION VERB RULE (CRITICAL — NO REPEATED VERBS):
+            - Every bullet across the ENTIRE resume must start with a UNIQUE action verb after the prefix.
+            - NEVER reuse verbs like: Built, Developed, Implemented, Designed, Engineered, Created, Owned, Led, Managed.
+            - Use each verb ONLY ONCE across all bullets. Vary aggressively. Examples of diverse verbs:
+              Built, Architected, Spearheaded, Pioneered, Orchestrated, Optimized, Reduced, Streamlined,
+              Shipped, Delivered, Automated, Migrated, Converted, Scaled, Drove, Eliminated, Accelerated,
+              Introduced, Revamped, Transformed, Consolidated, Integrated, Overhauled, Established.
+            - Before finalizing, scan all bullets and replace any duplicated verbs.
+
+            BULLET FORMAT (CRITICAL — every experience bullet MUST follow this pattern):
+            "Bold Prefix Title: UniqueVerb rest of description with metrics"
+            Example: "Distributed Caching System: Architected a gRPC-based distributed cache with pluggable modules, reducing cache misses by 35% and improving read throughput by 70%."
+            The prefix before the colon should be a short 2-4 word topic label. The description after should be 1-2 lines with metrics.
+
+            PAGE LENGTH CONSTRAINTS (CRITICAL — must fill exactly 1 printed page, not more, not less):
+            - Summary: 2-3 sentences. Dense with keywords.
+            - Skills: 5-7 categories (e.g., Languages, Frameworks & APIs, Databases & Storage, Infrastructure & Cloud, AI/ML, System Design). Each category has comma-separated values.
+            - Work experience: 5-6 bullet points for the most recent/current role. 3-4 bullets for older roles. Each bullet 15-30 words.
+            - Projects: exactly 3 projects, each with exactly 2 bullet points. No description field needed — put everything in achievements.
+            - Education: 1 line per entry (institution, location, degree, date).
+            - The page must be FULL — dense with keywords, metrics, and impact. No wasted space. No half-empty page.
+            {condensed_block}
 
             Output MUST be valid JSON and follow this schema:
 
             {{
-            "summary": "string",
+            "summary": "string (2-3 sentences)",
             "skills": {{
                 "Languages": ["string"],
-                "Frameworks & Tools": ["string"],
+                "Frameworks & APIs": ["string"],
+                "Caching & Messaging": ["string"],
                 "Databases & Storage": ["string"],
+                "AI / ML Systems": ["string"],
                 "Infrastructure & Cloud": ["string"],
-                "System Design": ["string"],
-                "Performance Optimization": ["string"]
+                "System Design": ["string"]
             }},
             "work_experience": [
                 {{
                 "title": "string",
                 "company": "string",
-                "location": "string",
-                "startDate": "MM-YYYY",
-                "endDate": "MM-YYYY or 'Present'",
-                "achievements": ["Did X to achieve Y using Z"],
-                "technologies": ["string"]
+                "location": "string (city)",
+                "startDate": "MM/YYYY",
+                "endDate": "MM/YYYY or 'Present'",
+                "achievements": ["Bold Prefix: Description with metrics (each bullet 15-30 words)"]
                 }}
             ],
             "projects": [
                 {{
                 "name": "string",
-                "description": "string",
-                "technologies": ["string"],
-                "achievements": ["Did X to achieve Y using Z"]
+                "url": "string or null",
+                "achievements": ["string (each bullet 15-25 words)"]
                 }}
             ],
             "education": [
                 {{
                 "degree": "string",
                 "institution": "string",
-                "graduationDate": "MM-YYYY"
+                "location": "string (city)",
+                "graduationDate": "MM/YYYY - MM/YYYY"
                 }}
-            ],
-            "certifications": ["string"]
+            ]
             }}
 
             Now rewrite the resume for ATS optimization using the following data:
 
             User Profile:
-            {profile.model_dump_json(indent=2)}
+            {profile.model_dump_json()}
 
             Job Description:
-            {job.model_dump_json(indent=2)}
+            {job.model_dump_json()}
 """
 
 def build_prompt_for_ats(resume: Union[str, Dict[str, Any]], job_description: Union[str, Dict[str, Any]]) -> str:
@@ -335,13 +369,25 @@ def extract_json(raw: str) -> dict:
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"Invalid JSON: {e}")
 
-async def generate_gemini(prompt: str):
-    resp = gemini_client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config={"temperature": 0.7, "response_mime_type": "application/json"}
-    )
-    return extract_json(resp.text.strip())
+import asyncio
+
+async def generate_gemini(prompt: str, max_retries: int = 3):
+    for attempt in range(max_retries):
+        try:
+            resp = gemini_client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config={"temperature": 0.7, "response_mime_type": "application/json"}
+            )
+            return extract_json(resp.text.strip())
+        except Exception as e:
+            err_str = str(e)
+            if ("503" in err_str or "UNAVAILABLE" in err_str or "overload" in err_str.lower() or "429" in err_str) and attempt < max_retries - 1:
+                wait = (attempt + 1) * 5
+                logger.warning(f"Gemini retry {attempt+1}/{max_retries} after {wait}s: {err_str[:100]}")
+                await asyncio.sleep(wait)
+                continue
+            raise
 
 async def generate_openrouter(prompt: str, model_id: str):
     if not OPENROUTER_API_KEY:
@@ -415,7 +461,7 @@ async def generate_ats(payload: GenerateAtsPayload):
 @app.post("/generate-resume")
 async def generate_resume(payload: GenerateResumePayload):
     try:
-        prompt = build_prompt(payload.profile, payload.jobDescription)
+        prompt = build_prompt(payload.profile, payload.jobDescription, condensed=bool(payload.condensed))
         provider = (payload.aiProvider or "Gemini").strip().lower()
         if provider == "gemini":
             structured_resume = await generate_gemini(prompt)
@@ -432,6 +478,72 @@ async def generate_resume(payload: GenerateResumePayload):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Resume generation failed: {e}")
+
+class ExtractKeywordsPayload(BaseModel):
+    description: str
+
+@app.post("/extract-keywords")
+async def extract_keywords(payload: ExtractKeywordsPayload):
+    try:
+        prompt = f"""Extract the most important technical keywords, skills, and requirements from this job description.
+Return ONLY a JSON object with this schema:
+{{
+  "keywords": ["string"],
+  "nice_to_have": ["string"]
+}}
+"keywords" = must-have skills/technologies mentioned.
+"nice_to_have" = preferred/bonus skills.
+Keep each item short (1-3 words). Max 15 keywords, max 8 nice_to_have.
+
+JOB DESCRIPTION:
+{payload.description}
+"""
+        result = await generate_gemini(prompt)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Keyword extraction failed: {e}")
+
+class CoverLetterPayload(BaseModel):
+    resume: Union[str, Dict[str, Any]]
+    jobDescription: JobDescription
+    companyName: Optional[str] = None
+
+@app.post("/generate-cover-letter")
+async def generate_cover_letter(payload: CoverLetterPayload):
+    try:
+        resume_text = payload.resume if isinstance(payload.resume, str) else json.dumps(payload.resume, indent=2)
+        company = payload.companyName or payload.jobDescription.company or "the company"
+        prompt = f"""You are an expert cover letter writer.
+
+Write a professional, compelling cover letter for the following job based on the candidate's resume.
+
+RULES:
+- 3-4 paragraphs, ~250-350 words total.
+- Opening: mention the specific role and company, show genuine interest.
+- Body: highlight 2-3 most relevant achievements from the resume that directly match the job requirements. Use specific metrics.
+- Closing: express enthusiasm, mention availability, call to action.
+- Tone: confident but not arrogant, professional but personable.
+- Do NOT repeat the resume verbatim — reframe achievements in narrative form.
+- Do NOT use generic filler like "I am writing to express my interest" — start with something specific.
+
+Return ONLY a JSON object:
+{{
+  "subject": "string (email subject line)",
+  "body": "string (the full cover letter text with \\n for line breaks)"
+}}
+
+RESUME:
+{resume_text}
+
+JOB DESCRIPTION:
+Title: {payload.jobDescription.title}
+Company: {company}
+Description: {payload.jobDescription.description}
+"""
+        result = await generate_deepseek(prompt)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cover letter generation failed: {e}")
 
 @app.get("/")
 def read_root():
