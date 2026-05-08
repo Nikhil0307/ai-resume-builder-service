@@ -127,7 +127,7 @@ def build_prompt(profile: UserProfile, job: JobDescription, condensed: bool = Fa
             - Summary: 2 sentences max.
             - Skills: 5 categories max, shorter lists.
             - Work experience: 4 bullets for current role, 3 for older. Each bullet 15-22 words max.
-            - Projects: exactly 2 projects, 2 bullets each. No 3rd project.
+            - Projects: exactly 3 projects, 2 bullets each.
             - Education: 1 line.
             - Keep the bold-prefix format on bullets. Keep metrics. Just tighten language.
 """
@@ -162,10 +162,10 @@ def build_prompt(profile: UserProfile, job: JobDescription, condensed: bool = Fa
             The prefix before the colon should be a short 2-4 word topic label. The description after should be 1-2 lines with metrics.
 
             PAGE LENGTH CONSTRAINTS (CRITICAL — must fill exactly 1 printed page, not more, not less):
-            - Summary: 2-3 sentences. Dense with keywords.
+            - Summary: 2-3 sentences. Write in a natural, humanized tone — not robotic or keyword-stuffed. Sound like a real person describing their strengths conversationally but professionally.
             - Skills: 5-7 categories (e.g., Languages, Frameworks & APIs, Databases & Storage, Infrastructure & Cloud, AI/ML, System Design). Each category has comma-separated values.
             - Work experience: 5-6 bullet points for the most recent/current role. 3-4 bullets for older roles. Each bullet 15-30 words.
-            - Projects: exactly 2 projects, each with exactly 2 bullet points. No description field needed — put everything in achievements. Do NOT include a 3rd project.
+            - Projects: exactly 3 projects, each with exactly 2 bullet points. No description field needed — put everything in achievements.
             - Education: 1 line per entry (institution, location, degree, date).
             - The page must be FULL — dense with keywords, metrics, and impact. No wasted space. No half-empty page.
             {condensed_block}
