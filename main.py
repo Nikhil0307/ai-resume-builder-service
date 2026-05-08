@@ -116,7 +116,7 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MISTRAL_MODEL = os.getenv("MISTRAL_MODEL_ID", "cognitivecomputations/dolphin-mistral-24b-venice-edition:free")
 DEFAULT_LLAMA_MODEL = os.getenv("LLAMA_MODEL_ID", "meta-llama/llama-3.3-70b-instruct:free")
 DEFAULT_DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL_ID", "qwen/qwen3-coder:free")
-DEFAULT_DEEPSEEK_MODEL_ATS = os.getenv("DEEPSEEK_ATS_MODEL_ID", "nvidia/nemotron-3-super-120b-a12b:free")
+DEFAULT_DEEPSEEK_MODEL_ATS = os.getenv("DEEPSEEK_ATS_MODEL_ID", "nvidia/nemotron-3-nano-30b-a3b:free")
 
 def build_prompt(profile: UserProfile, job: JobDescription, condensed: bool = False) -> str:
     condensed_block = ""
@@ -410,7 +410,7 @@ async def generate_gemini(prompt: str, max_retries: int = 3):
     logger.warning(f"Gemini primary ({GEMINI_PRIMARY_MODEL}) failed, falling back to {GEMINI_FALLBACK_MODEL}")
     return await _call_gemini(prompt, GEMINI_FALLBACK_MODEL)
 
-async def generate_openrouter(prompt: str, model_id: str):
+async def generate_openrouter(prompt: str, model_id: str, max_retries: int = 2):
     if not OPENROUTER_API_KEY:
         raise HTTPException(status_code=500, detail="Missing OPENROUTER_API_KEY")
     headers = {
@@ -427,15 +427,22 @@ async def generate_openrouter(prompt: str, model_id: str):
         ],
         "temperature": 0.7
     }
-    async with httpx.AsyncClient(timeout=120) as client:
-        r = await client.post(OPENROUTER_BASE_URL, headers=headers, json=payload)
-        if r.status_code >= 400:
-            raise HTTPException(status_code=500, detail=f"OpenRouter error: {r.status_code} {r.text}")
-        data = r.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    if not content:
-        raise HTTPException(status_code=500, detail="Empty response from OpenRouter")
-    return extract_json(content)
+    for attempt in range(max_retries):
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.post(OPENROUTER_BASE_URL, headers=headers, json=payload)
+            if r.status_code == 429 and attempt < max_retries - 1:
+                wait = (attempt + 1) * 5
+                logger.warning(f"OpenRouter 429 retry {attempt+1}/{max_retries} for {model_id} after {wait}s")
+                await asyncio.sleep(wait)
+                continue
+            if r.status_code >= 400:
+                raise HTTPException(status_code=500, detail=f"OpenRouter error: {r.status_code} {r.text}")
+            data = r.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not content:
+            raise HTTPException(status_code=500, detail="Empty response from OpenRouter")
+        return extract_json(content)
+    raise HTTPException(status_code=500, detail=f"OpenRouter failed after {max_retries} retries")
 
 async def generate_mistral(prompt: str, model_override: Optional[str] = None):
     model = model_override or DEFAULT_MISTRAL_MODEL
