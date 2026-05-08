@@ -543,23 +543,34 @@ async def generate_cover_letter(payload: CoverLetterPayload):
     try:
         resume_text = payload.resume if isinstance(payload.resume, str) else json.dumps(payload.resume, indent=2)
         company = payload.companyName or payload.jobDescription.company or "the company"
-        prompt = f"""You are an expert cover letter writer.
+        candidate_name = "the candidate"
+        if isinstance(payload.resume, dict) and payload.resume.get("personalInfo"):
+            candidate_name = payload.resume["personalInfo"].get("name", candidate_name)
 
-Write a professional, compelling cover letter for the following job based on the candidate's resume.
+        prompt = f"""You are an expert cover letter writer. Write a formal business-style cover letter.
 
-RULES:
-- 3-4 paragraphs, ~250-350 words total.
-- Opening: mention the specific role and company, show genuine interest.
-- Body: highlight 2-3 most relevant achievements from the resume that directly match the job requirements. Use specific metrics.
-- Closing: express enthusiasm, mention availability, call to action.
-- Tone: confident but not arrogant, professional but personable.
-- Do NOT repeat the resume verbatim — reframe achievements in narrative form.
-- Do NOT use generic filler like "I am writing to express my interest" — start with something specific.
+STRUCTURE (follow exactly):
+1. Salutation: "Dear Hiring Team," (on its own line)
+2. Opening paragraph: 2-3 sentences. Mention the specific role and {company} by name. State why you're excited about this opportunity — be specific to the company/role, not generic.
+3. Body paragraph 1: 3-4 sentences. Highlight your most relevant experience. Reframe 2-3 resume achievements as a narrative — do NOT copy bullet points. Use natural flowing prose with metrics woven in.
+4. Body paragraph 2: 2-3 sentences. Connect your skills to what the role needs. Show you understand their challenges and how you solve them.
+5. Closing paragraph: 2 sentences. Express genuine enthusiasm. Mention availability for a conversation.
+6. Sign-off: "Sincerely," followed by "{candidate_name}" (each on its own line)
+
+TONE & STYLE:
+- Executive-style business letter. Polished, concise, recruiter-friendly.
+- Sound human and conversational — NOT like a pasted resume or essay.
+- Smooth transitions between paragraphs. No abrupt topic jumps.
+- Each paragraph is a continuous block — NO mid-paragraph line breaks.
+- Separate paragraphs with a single blank line (\\n\\n).
+- ~250-300 words total (excluding salutation and sign-off).
+- Do NOT start with "I am writing to express my interest" or any generic opener.
+- Do NOT use hyphens to wrap words. Keep sentences clean and complete.
 
 Return ONLY a JSON object:
 {{
-  "subject": "string (email subject line)",
-  "body": "string (the full cover letter text with \\n for line breaks)"
+  "subject": "Application for {payload.jobDescription.title} at {company}",
+  "body": "Dear Hiring Team,\\n\\nOpening paragraph...\\n\\nBody paragraph 1...\\n\\nBody paragraph 2...\\n\\nClosing paragraph...\\n\\nSincerely,\\n{candidate_name}"
 }}
 
 RESUME:
