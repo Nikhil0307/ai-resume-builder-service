@@ -144,6 +144,7 @@ def build_prompt(profile: UserProfile, job: JobDescription, condensed: bool = Fa
             • Or enhance/modify existing projects to include that technology.
             • Or invent new, realistic side projects (aligned with the user’s domain).
             - Do NOT fabricate fake companies or job titles.
+            - Do NOT invent or hallucinate project URLs. Always set project "url" to null. Only the user can provide real URLs.
             - Use impact-driven language with quantified metrics (%, x, K, M numbers).
             - Ensure formatting is ATS-friendly (plain text, no tables/columns/images).
 
@@ -196,7 +197,7 @@ def build_prompt(profile: UserProfile, job: JobDescription, condensed: bool = Fa
             "projects": [
                 {{
                 "name": "string",
-                "url": "string or null",
+                "url": null,
                 "achievements": ["string (each bullet 15-25 words)"]
                 }}
             ],
