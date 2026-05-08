@@ -114,8 +114,8 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MISTRAL_MODEL = os.getenv("MISTRAL_MODEL_ID", "nvidia/nemotron-3-nano-30b-a3b:free")
-DEFAULT_LLAMA_MODEL = os.getenv("LLAMA_MODEL_ID", "meta-llama/llama-3.3-70b-instruct:free")
-DEFAULT_DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL_ID", "qwen/qwen3-coder:free")
+DEFAULT_LLAMA_MODEL = os.getenv("LLAMA_MODEL_ID", "openai/gpt-oss-120b:free")
+DEFAULT_DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL_ID", "minimax/minimax-m2.5:free")
 DEFAULT_DEEPSEEK_MODEL_ATS = os.getenv("DEEPSEEK_ATS_MODEL_ID", "nvidia/nemotron-3-nano-30b-a3b:free")
 
 def build_prompt(profile: UserProfile, job: JobDescription, condensed: bool = False) -> str:
