@@ -240,7 +240,8 @@ def build_prompt_for_ats(resume: Union[str, Dict[str, Any]], job_description: Un
                     parts.append(f"{title} @ {company} — {ach}")
             if x.get("projects"):
                 for p in x.get("projects", []):
-                    parts.append(f"project: {p.get('name','')} — {p.get('description','')}")
+                    ach = " ; ".join(p.get("achievements", []))
+                    parts.append(f"project: {p.get('name','')} — {p.get('description', '')} {ach}")
             return "\n".join(parts).strip()
         return ""
 
@@ -462,7 +463,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.post("/generate-ats")
 async def generate_ats(payload: GenerateAtsPayload):
     try:
-        prompt = build_prompt_for_ats(payload.resume, payload.jobDescription)
+        resume_data = payload.resume.content if hasattr(payload.resume, 'content') else payload.resume
+        job_data = payload.jobDescription.model_dump() if hasattr(payload.jobDescription, 'model_dump') else payload.jobDescription
+        prompt = build_prompt_for_ats(resume_data, job_data)
         raw_result = await generate_ats_deepseek(prompt)
 
         # raw_result should be a dict parsed from the LLM response. Normalize for frontend.
