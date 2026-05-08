@@ -566,6 +566,12 @@ TONE & STYLE:
 - ~250-300 words total (excluding salutation and sign-off).
 - Do NOT start with "I am writing to express my interest" or any generic opener.
 - Do NOT use hyphens to wrap words. Keep sentences clean and complete.
+- Avoid exaggerated praise or unrealistic claims about the company.
+- Never repeat the same metric or achievement more than once.
+- Keep sentences under 25 words for readability.
+- Avoid buzzwords and overly dramatic language (no "thrilled", "passionate", "game-changer").
+- Never invent experience, technologies, or impact not in the resume or job description.
+- Must read naturally when pasted into email or exported as PDF.
 
 Return ONLY a JSON object:
 {{
