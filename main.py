@@ -113,10 +113,10 @@ GEMINI_FALLBACK_MODEL = "gemini-2.5-flash"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MISTRAL_MODEL = os.getenv("MISTRAL_MODEL_ID", "mistralai/mistral-7b-instruct:free")
-DEFAULT_LLAMA_MODEL = os.getenv("LLAMA_MODEL_ID", "meta-llama/llama-3.1-405b-instruct:free")
-DEFAULT_DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL_ID", "deepseek/deepseek-chat-v3.1:free")
-DEFAULT_DEEPSEEK_MODEL_ATS = os.getenv("DEEPSEEK_ATS_MODEL_ID", "deepseek/deepseek-r1-distill-llama-70b:free")
+DEFAULT_MISTRAL_MODEL = os.getenv("MISTRAL_MODEL_ID", "cognitivecomputations/dolphin-mistral-24b-venice-edition:free")
+DEFAULT_LLAMA_MODEL = os.getenv("LLAMA_MODEL_ID", "meta-llama/llama-3.3-70b-instruct:free")
+DEFAULT_DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL_ID", "qwen/qwen3-coder:free")
+DEFAULT_DEEPSEEK_MODEL_ATS = os.getenv("DEEPSEEK_ATS_MODEL_ID", "nvidia/nemotron-3-super-120b-a12b:free")
 
 def build_prompt(profile: UserProfile, job: JobDescription, condensed: bool = False) -> str:
     condensed_block = ""
