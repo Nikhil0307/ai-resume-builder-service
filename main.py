@@ -95,6 +95,7 @@ origins = [
     "https://ai-resume-builder-service-66nz.onrender.com",  # optional if your frontend fetches from same origin
     "http://localhost:3000",  # local dev
     "http://localhost:5173",  # vite dev
+    "https://ai-resume-backend-97113263099.asia-south1.run.app",  # cloud run
 ]
 
 app.add_middleware(
