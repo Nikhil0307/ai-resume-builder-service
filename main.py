@@ -537,15 +537,14 @@ class CoverLetterPayload(BaseModel):
     resume: Union[str, Dict[str, Any]]
     jobDescription: JobDescription
     companyName: Optional[str] = None
+    candidateName: Optional[str] = None
 
 @app.post("/generate-cover-letter")
 async def generate_cover_letter(payload: CoverLetterPayload):
     try:
         resume_text = payload.resume if isinstance(payload.resume, str) else json.dumps(payload.resume, indent=2)
         company = payload.companyName or payload.jobDescription.company or "the company"
-        candidate_name = "the candidate"
-        if isinstance(payload.resume, dict) and payload.resume.get("personalInfo"):
-            candidate_name = payload.resume["personalInfo"].get("name", candidate_name)
+        candidate_name = payload.candidateName or "the candidate"
 
         prompt = f"""You are an expert cover letter writer. Write a formal business-style cover letter.
 
